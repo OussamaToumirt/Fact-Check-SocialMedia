@@ -29,9 +29,10 @@ async def index(request: Request):
 async def analyze(req: AnalyzeRequest):
     if not settings.openai_api_key:
         raise HTTPException(status_code=400, detail="OPENAI_API_KEY is not set.")
-    job = await job_store.create(req.url)
-    asyncio.create_task(job_store.run_pipeline(job.id))
-    return {"job_id": job.id}
+    job, cached = await job_store.find_or_create(url=req.url, output_language=req.output_language, force=req.force)
+    if job.status not in {"completed", "failed"}:
+        asyncio.create_task(job_store.run_pipeline(job.id))
+    return {"job_id": job.id, "cached": cached}
 
 
 @app.get("/api/jobs/{job_id}", response_model=Job)
@@ -40,4 +41,3 @@ async def get_job(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
-

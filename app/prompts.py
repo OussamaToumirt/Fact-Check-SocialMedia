@@ -41,10 +41,54 @@ Output must follow the provided JSON schema exactly.
 """
 
 
-def build_factcheck_user_prompt(*, transcript: str, url: str | None = None) -> str:
+LANGUAGE_NAME_BY_CODE = {
+    "ar": "Arabic",
+    "bn": "Bengali",
+    "cs": "Czech",
+    "da": "Danish",
+    "en": "English",
+    "el": "Greek",
+    "fr": "French",
+    "es": "Spanish",
+    "fa": "Persian",
+    "de": "German",
+    "fi": "Finnish",
+    "he": "Hebrew",
+    "hu": "Hungarian",
+    "id": "Indonesian",
+    "it": "Italian",
+    "ms": "Malay",
+    "no": "Norwegian",
+    "ro": "Romanian",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "sw": "Swahili",
+    "th": "Thai",
+    "tl": "Filipino (Tagalog)",
+    "zh": "Chinese",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "hi": "Hindi",
+    "tr": "Turkish",
+    "nl": "Dutch",
+    "sv": "Swedish",
+    "pl": "Polish",
+    "uk": "Ukrainian",
+    "ur": "Urdu",
+    "vi": "Vietnamese",
+}
+
+
+def build_factcheck_user_prompt(*, transcript: str, url: str | None = None, output_language: str = "ar") -> str:
+    lang_code = (output_language or "").strip().lower() or "ar"
+    lang_name = LANGUAGE_NAME_BY_CODE.get(lang_code, lang_code)
     meta = f"Video URL: {url}\n\n" if url else ""
     return (
         f"{meta}"
+        f"Requested output language: {lang_name} (code: {lang_code}).\n"
+        "Write all human-readable text fields (summary, whats_right/wrong, missing_context, claim explanations, corrections, danger descriptions/mitigations, limitations) in that language.\n"
+        "Do NOT translate JSON keys or enum values.\n"
+        "For sources_used and per-claim sources: keep source titles/publishers as they appear on the source (do not translate).\n\n"
         "Transcript (verbatim, may contain errors):\n"
         f"{transcript}\n\n"
         "Task:\n"

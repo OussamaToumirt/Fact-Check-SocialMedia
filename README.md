@@ -24,6 +24,11 @@ uvicorn app.main:app --reload
 ```
 Open `http://127.0.0.1:8000`.
 
+## Features
+- Output language selector (Arabic/English/French + more)
+- Saved results per URL+language (submit the same URL again to reuse the last report)
+- Optional re-run to overwrite the saved report
+
 ## Docker
 ```bash
 export OPENAI_API_KEY=...

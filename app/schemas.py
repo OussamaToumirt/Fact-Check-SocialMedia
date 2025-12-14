@@ -69,6 +69,8 @@ class FactCheckReport(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     url: str
+    output_language: str = Field("ar", description="BCP-47 language code, e.g. ar, en, fr.")
+    force: bool = Field(False, description="If true, re-run analysis and overwrite cached result for this URL+language.")
 
 
 JobStatus = Literal[
@@ -84,6 +86,7 @@ JobStatus = Literal[
 class Job(BaseModel):
     id: str
     url: str
+    output_language: str = "ar"
     status: JobStatus
     created_at: datetime
     updated_at: datetime

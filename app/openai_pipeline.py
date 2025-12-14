@@ -105,7 +105,9 @@ def transcribe_audio_mp3(mp3_path: Path) -> str:
     return getattr(tx, "text", "") or ""
 
 
-def fact_check_transcript(*, transcript: str, url: Optional[str] = None) -> Tuple[FactCheckReport, dict[str, Any]]:
+def fact_check_transcript(
+    *, transcript: str, url: Optional[str] = None, output_language: str = "ar"
+) -> Tuple[FactCheckReport, dict[str, Any]]:
     """
     Returns (report, raw_response_dict) where raw_response_dict includes tool sources when requested.
     """
@@ -117,7 +119,10 @@ def fact_check_transcript(*, transcript: str, url: Optional[str] = None) -> Tupl
         model=settings.factcheck_model,
         input=[
             {"role": "system", "content": FACTCHECK_SYSTEM_PROMPT},
-            {"role": "user", "content": build_factcheck_user_prompt(transcript=transcript, url=url)},
+            {
+                "role": "user",
+                "content": build_factcheck_user_prompt(transcript=transcript, url=url, output_language=output_language),
+            },
         ],
         tools=[
             {
