@@ -8,8 +8,11 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from uuid import uuid4
 
 from .config import settings
-from .openai_pipeline import fact_check_transcript, transcribe_audio_mp3
-from .schemas import HistoryItem, Job
+from .gemini_pipeline import fact_check_transcript as gemini_fact_check
+from .gemini_pipeline import transcribe_audio_mp3 as gemini_transcribe
+from .openai_pipeline import fact_check_transcript as openai_fact_check
+from .openai_pipeline import transcribe_audio_mp3 as openai_transcribe
+from .schemas import HistoryItem, Job, Provider
 from .storage import read_json, write_json, write_model
 from .ytdlp_audio import DownloadError, download_mp3
 
@@ -62,7 +65,7 @@ class JobStore:
         return self._job_dir(job_id) / "job.json"
 
     def _raw_response_path(self, job_id: str) -> Path:
-        return self._job_dir(job_id) / "openai_raw.json"
+        return self._job_dir(job_id) / "raw_response.json"
 
     def _transcript_path(self, job_id: str) -> Path:
         return self._job_dir(job_id) / "transcript.txt"
@@ -83,12 +86,12 @@ class JobStore:
             return None
 
     @staticmethod
-    def _cache_key(url: str, output_language: str) -> str:
-        return f"{_normalize_url(url)}||{(output_language or '').strip().lower() or 'ar'}"
+    def _cache_key(url: str, output_language: str, provider: str) -> str:
+        return f"{_normalize_url(url)}||{(output_language or '').strip().lower() or 'ar'}||{provider}"
 
-    async def find_or_create(self, *, url: str, output_language: str, force: bool = False) -> tuple[Job, bool]:
+    async def find_or_create(self, *, url: str, output_language: str, provider: Provider = "gemini", force: bool = False, api_key: Optional[str] = None) -> tuple[Job, bool]:
         async with self._lock:
-            cache_key = self._cache_key(url, output_language)
+            cache_key = self._cache_key(url, output_language, provider)
             if not force:
                 cached_id = self._index.get(cache_key)
                 if cached_id:
@@ -103,6 +106,7 @@ class JobStore:
                 id=job_id,
                 url=url,
                 output_language=(output_language or "").strip().lower() or "ar",
+                provider=provider,
                 status="queued",
                 created_at=now,
                 updated_at=now,
@@ -170,7 +174,7 @@ class JobStore:
             self._jobs[job_id] = updated
             write_model(self._job_path(job_id), updated)
 
-    async def run_pipeline(self, job_id: str) -> None:
+    async def run_pipeline(self, job_id: str, api_key: Optional[str] = None) -> None:
         async with self._lock:
             if job_id in self._running:
                 return
@@ -193,16 +197,56 @@ class JobStore:
             )
 
             await self.update(job_id, status="transcribing", progress=40)
-            transcript = await asyncio.to_thread(transcribe_audio_mp3, mp3_path)
+            
+            transcript = ""
+            if job.provider == "gemini":
+                transcript = await asyncio.to_thread(gemini_transcribe, mp3_path, api_key=api_key)
+            elif job.provider == "openai":
+                transcript = await asyncio.to_thread(openai_transcribe, mp3_path, api_key=api_key)
+            elif job.provider == "deepseek":
+                # DeepSeek doesn't support audio, try Gemini then OpenAI with server keys
+                try:
+                    transcript = await asyncio.to_thread(gemini_transcribe, mp3_path, api_key=None)
+                except Exception:
+                    try:
+                        transcript = await asyncio.to_thread(openai_transcribe, mp3_path, api_key=None)
+                    except Exception:
+                        raise RuntimeError("DeepSeek selected but no transcription service (Gemini/OpenAI) available on server.")
+            
             self._transcript_path(job_id).write_text(transcript, encoding="utf-8")
 
             await self.update(job_id, status="fact_checking", progress=70, transcript=transcript)
-            report, raw = await asyncio.to_thread(
-                fact_check_transcript,
-                transcript=transcript,
-                url=job.url,
-                output_language=job.output_language,
-            )
+            
+            report = None
+            raw = {}
+            
+            if job.provider == "gemini":
+                report, raw = await asyncio.to_thread(
+                    gemini_fact_check,
+                    transcript=transcript,
+                    url=job.url,
+                    output_language=job.output_language,
+                    api_key=api_key,
+                )
+            elif job.provider == "openai":
+                report, raw = await asyncio.to_thread(
+                    openai_fact_check,
+                    transcript=transcript,
+                    url=job.url,
+                    output_language=job.output_language,
+                    api_key=api_key,
+                )
+            elif job.provider == "deepseek":
+                report, raw = await asyncio.to_thread(
+                    openai_fact_check,
+                    transcript=transcript,
+                    url=job.url,
+                    output_language=job.output_language,
+                    api_key=api_key,
+                    base_url="https://api.deepseek.com",
+                    model=settings.deepseek_model,
+                )
+
             write_model(self._report_path(job_id), report)
             write_json(self._raw_response_path(job_id), raw)
 

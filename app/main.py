@@ -27,11 +27,39 @@ async def index(request: Request):
 
 @app.post("/api/analyze")
 async def analyze(req: AnalyzeRequest):
-    if not settings.openai_api_key:
-        raise HTTPException(status_code=400, detail="OPENAI_API_KEY is not set.")
-    job, cached = await job_store.find_or_create(url=req.url, output_language=req.output_language, force=req.force)
+    print(f"DEBUG: Received analyze request: {req.model_dump()}")
+    
+    api_key = req.api_key
+    
+    # Fallback to server keys if not provided
+    if not api_key:
+        if req.provider == "gemini":
+            api_key = settings.gemini_api_key
+        elif req.provider == "openai":
+            api_key = settings.openai_api_key
+        elif req.provider == "deepseek":
+            api_key = settings.deepseek_api_key
+
+    if not api_key:
+        msg = f"{req.provider.title()} API key is required."
+        if req.provider == "gemini":
+            msg += " Get free key: https://aistudio.google.com/app/apikey"
+        elif req.provider == "openai":
+            msg += " Get key: https://platform.openai.com/api-keys"
+        elif req.provider == "deepseek":
+            msg += " Get key: https://platform.deepseek.com/api_keys"
+        raise HTTPException(status_code=400, detail=msg)
+
+    job, cached = await job_store.find_or_create(
+        url=req.url, 
+        output_language=req.output_language, 
+        provider=req.provider,
+        force=req.force, 
+        api_key=api_key
+    )
+    
     if job.status not in {"completed", "failed"}:
-        asyncio.create_task(job_store.run_pipeline(job.id))
+        asyncio.create_task(job_store.run_pipeline(job.id, api_key=api_key))
     return {"job_id": job.id, "cached": cached}
 
 

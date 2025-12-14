@@ -16,136 +16,66 @@ class OpenAIError(RuntimeError):
     pass
 
 
-def _dereference_json_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """
-    OpenAI structured outputs supports JSON Schema, but some runtimes are finicky about $ref/$defs.
-    This helper inlines local "#/$defs/..." references to keep the schema self-contained.
-    """
-    defs: dict[str, Any] = schema.get("$defs", {}) if isinstance(schema.get("$defs"), dict) else {}
-    resolving: set[str] = set()
-    resolved_cache: dict[str, Any] = {}
-
-    def resolve_ref(ref: str) -> Any:
-        prefix = "#/$defs/"
-        if not ref.startswith(prefix):
-            return {"$ref": ref}
-        name = ref[len(prefix) :]
-        if name in resolved_cache:
-            return resolved_cache[name]
-        if name in resolving:
-            # Shouldn't happen for our schema; keep as-is to avoid infinite recursion.
-            return defs.get(name, {"$ref": ref})
-        resolving.add(name)
-        resolved_cache[name] = _walk(defs.get(name, {"$ref": ref}))
-        resolving.remove(name)
-        return resolved_cache[name]
-
-    def _walk(node: Any) -> Any:
-        if isinstance(node, list):
-            return [_walk(x) for x in node]
-        if not isinstance(node, dict):
-            return node
-        if "$ref" in node and isinstance(node["$ref"], str):
-            return resolve_ref(node["$ref"])
-        out: dict[str, Any] = {}
-        for k, v in node.items():
-            if k == "$defs":
-                continue
-            out[k] = _walk(v)
-        return out
-
-    flattened = _walk(schema)
-    if isinstance(flattened, dict):
-        flattened.pop("$defs", None)
-    return flattened
+def _client(api_key: Optional[str] = None, base_url: Optional[str] = None) -> OpenAI:
+    return OpenAI(
+        api_key=api_key or settings.openai_api_key,
+        base_url=base_url
+    )
 
 
-def _tighten_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """
-    Make object schemas explicit about additionalProperties.
-    This improves determinism for structured outputs and keeps responses small/consistent.
-    """
-
-    def walk(node: Any) -> Any:
-        if isinstance(node, list):
-            return [walk(x) for x in node]
-        if not isinstance(node, dict):
-            return node
-
-        is_objectish = node.get("type") == "object" or "properties" in node
-        if is_objectish and isinstance(node.get("properties"), dict):
-            # OpenAI structured outputs expects required to include every property key.
-            props: dict[str, Any] = node["properties"]
-            node["required"] = list(props.keys())
-            node["additionalProperties"] = False
-
-        for k, v in list(node.items()):
-            node[k] = walk(v)
-        return node
-
-    return walk(schema)
-
-
-def _client() -> OpenAI:
-    # openai sdk also reads OPENAI_API_KEY from env, but we keep it explicit.
-    return OpenAI(api_key=settings.openai_api_key or None)
-
-
-def transcribe_audio_mp3(mp3_path: Path) -> str:
-    client = _client()
+def transcribe_audio_mp3(mp3_path: Path, api_key: Optional[str] = None, base_url: Optional[str] = None, model: Optional[str] = None) -> str:
+    client = _client(api_key, base_url)
+    model = model or settings.openai_model # Fallback, though usually whisper-1
+    
+    # OpenAI usually uses 'whisper-1' for transcription
+    transcribe_model = "whisper-1" 
+    
     with mp3_path.open("rb") as f:
         tx = client.audio.transcriptions.create(
-            model=settings.transcribe_model,
+            model=transcribe_model,
             file=f,
             response_format="text",
         )
-    # SDK may return a plain string or an object with `.text`
+    
     if isinstance(tx, str):
         return tx
     return getattr(tx, "text", "") or ""
 
 
 def fact_check_transcript(
-    *, transcript: str, url: Optional[str] = None, output_language: str = "ar"
+    *, 
+    transcript: str, 
+    url: Optional[str] = None, 
+    output_language: str = "ar",
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    model: Optional[str] = None
 ) -> Tuple[FactCheckReport, dict[str, Any]]:
-    """
-    Returns (report, raw_response_dict) where raw_response_dict includes tool sources when requested.
-    """
-    client = _client()
+    
+    client = _client(api_key, base_url)
+    model = model or settings.openai_model
+    
+    schema = FactCheckReport.model_json_schema()
+    
+    # Add schema to prompt for models that don't support strict json_schema
+    system_prompt = f"{FACTCHECK_SYSTEM_PROMPT}\n\nYou must respond with a valid JSON object matching this schema:\n{json.dumps(schema, indent=2)}"
+    
+    user_prompt = build_factcheck_user_prompt(transcript=transcript, url=url, output_language=output_language)
 
-    schema = _tighten_schema(_dereference_json_schema(FactCheckReport.model_json_schema()))
+    try:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+        )
+    except Exception as e:
+        raise OpenAIError(f"OpenAI API error: {e}") from e
 
-    response = client.responses.create(
-        model=settings.factcheck_model,
-        input=[
-            {"role": "system", "content": FACTCHECK_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": build_factcheck_user_prompt(transcript=transcript, url=url, output_language=output_language),
-            },
-        ],
-        tools=[
-            {
-                "type": "web_search",
-                "user_location": {"type": "approximate"},
-                "search_context_size": "medium",
-            }
-        ],
-        reasoning={"effort": "high", "summary": "auto"},
-        text={
-            "verbosity": "medium",
-            "format": {
-                "type": "json_schema",
-                "name": "fact_check_report",
-                "strict": True,
-                "schema": schema,
-            },
-        },
-        store=True,
-        include=["reasoning.encrypted_content", "web_search_call.action.sources"],
-    )
-
-    output_text = getattr(response, "output_text", None) or ""
+    output_text = response.choices[0].message.content or ""
     if not output_text:
         raise OpenAIError("Empty model output.")
 
@@ -157,6 +87,12 @@ def fact_check_transcript(
     if "generated_at" not in report_dict:
         report_dict["generated_at"] = datetime.now(tz=timezone.utc).isoformat()
 
-    report = FactCheckReport.model_validate(report_dict)
-    raw = response.model_dump(mode="json") if hasattr(response, "model_dump") else {}
+    try:
+        report = FactCheckReport.model_validate(report_dict)
+    except Exception as e:
+         # Try to be lenient if possible, or just fail
+         raise OpenAIError(f"Validation failed: {e}") from e
+
+    raw = response.model_dump(mode="json")
     return report, raw
+

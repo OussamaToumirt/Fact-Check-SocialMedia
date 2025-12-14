@@ -24,6 +24,28 @@
       <section class="card">
         <div class="grid2">
           <div>
+            <label class="label" for="provider">AI Provider</label>
+            <div class="dropdown" id="providerDropdown">
+              <button id="providerButton" class="dropdownBtn" type="button">
+                <span id="providerLabel">Gemini</span>
+                <span class="chev">▾</span>
+              </button>
+              <div id="providerMenu" class="dropdownMenu hidden">
+                <div class="dropdownItem" data-value="gemini">Gemini (Free Tier Available)</div>
+                <div class="dropdownItem" data-value="openai">OpenAI (GPT-4o)</div>
+                <div class="dropdownItem" data-value="deepseek">DeepSeek (R1/V3)</div>
+              </div>
+            </div>
+          </div>
+          <div>
+            <label class="label" id="apiKeyLabel" for="apiKey">Gemini API Key *</label>
+            <input id="apiKey" class="input apiKey" type="password" placeholder="Enter API Key" required />
+            <p id="apiKeyHelp" class="muted small" style="margin-top: 4px;">🔑 <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: var(--accent);">Get free Gemini API key</a></p>
+          </div>
+        </div>
+
+        <div class="grid2" style="margin-top: 16px;">
+          <div>
             <label class="label" for="url">Video URL</label>
             <div class="row">
               <input id="url" class="input" placeholder="https://www.instagram.com/reel/... or https://youtu.be/..." />
@@ -128,6 +150,6 @@
       </section>
     </main>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=3"></script>
   </body>
 </html>

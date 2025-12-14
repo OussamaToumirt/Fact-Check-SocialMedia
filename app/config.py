@@ -10,13 +10,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    gemini_api_key: str = ""
     openai_api_key: str = ""
+    deepseek_api_key: str = ""
 
     data_dir: Path = Path("data")
     ytdlp_cookies_file: Optional[Path] = None
 
-    transcribe_model: str = "gpt-4o-transcribe"
-    factcheck_model: str = "gpt-5.2-2025-12-11"
+    # Models
+    gemini_model: str = "gemini-2.0-flash"
+    openai_model: str = "gpt-4o"
+    deepseek_model: str = "deepseek-chat"
+    
+    # Legacy support (can be removed later if unused)
+    transcribe_model: str = "gemini-2.0-flash"
+    factcheck_model: str = "gemini-2.0-flash"
 
     @field_validator("ytdlp_cookies_file", mode="before")
     @classmethod

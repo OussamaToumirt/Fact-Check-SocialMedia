@@ -67,10 +67,15 @@ class FactCheckReport(BaseModel):
     limitations: Optional[str] = None
 
 
+Provider = Literal["gemini", "openai", "deepseek"]
+
+
 class AnalyzeRequest(BaseModel):
     url: str
     output_language: str = Field("ar", description="BCP-47 language code, e.g. ar, en, fr.")
     force: bool = Field(False, description="If true, re-run analysis and overwrite cached result for this URL+language.")
+    provider: Provider = "gemini"
+    api_key: Optional[str] = None
 
 
 JobStatus = Literal[
@@ -87,6 +92,7 @@ class Job(BaseModel):
     id: str
     url: str
     output_language: str = "ar"
+    provider: Provider = "gemini"
     status: JobStatus
     created_at: datetime
     updated_at: datetime

@@ -1,4 +1,13 @@
 const els = {
+  apiKey: document.getElementById("apiKey"),
+  apiKeyLabel: document.getElementById("apiKeyLabel"),
+  apiKeyHelp: document.getElementById("apiKeyHelp"),
+  
+  providerDropdown: document.getElementById("providerDropdown"),
+  providerButton: document.getElementById("providerButton"),
+  providerMenu: document.getElementById("providerMenu"),
+  providerLabel: document.getElementById("providerLabel"),
+
   url: document.getElementById("url"),
   run: document.getElementById("run"),
   forceRun: document.getElementById("forceRun"),
@@ -79,8 +88,15 @@ const LANGUAGES_OTHERS = [
 const LANGUAGES = [...LANGUAGES_PINNED, ...LANGUAGES_OTHERS];
 
 let selectedLanguage = LANGUAGES[0];
+let selectedProvider = "gemini";
 let lastSubmittedUrl = "";
 let currentReportLanguage = null;
+
+const PROVIDERS = {
+  gemini: { name: "Gemini", label: "Gemini API Key *", help: '🔑 <a href="https://aistudio.google.com/app/apikey" target="_blank" style="color: var(--accent);">Get free Gemini API key</a>' },
+  openai: { name: "OpenAI", label: "OpenAI API Key *", help: '🔑 <a href="https://platform.openai.com/api-keys" target="_blank" style="color: var(--accent);">Get OpenAI API key</a>' },
+  deepseek: { name: "DeepSeek", label: "DeepSeek API Key *", help: '🔑 <a href="https://platform.deepseek.com/api_keys" target="_blank" style="color: var(--accent);">Get DeepSeek API key</a>' },
+};
 
 const RTL_LANGS = new Set(["ar", "fa", "he", "ur"]);
 
@@ -97,6 +113,34 @@ function setText(el, text) {
 function isRtlLanguage(code) {
   return RTL_LANGS.has(String(code || "").toLowerCase());
 }
+
+// --- Provider Dropdown ---
+if (els.providerButton && els.providerMenu) {
+  els.providerButton.addEventListener("click", (e) => {
+    e.stopPropagation();
+    els.providerMenu.classList.toggle("hidden");
+  });
+
+  els.providerMenu.addEventListener("click", (e) => {
+    const item = e.target.closest(".dropdownItem");
+    if (!item) return;
+    const val = item.dataset.value;
+    if (val && PROVIDERS[val]) {
+      selectedProvider = val;
+      els.providerLabel.textContent = PROVIDERS[val].name;
+      els.apiKeyLabel.textContent = PROVIDERS[val].label;
+      els.apiKeyHelp.innerHTML = PROVIDERS[val].help;
+      els.providerMenu.classList.add("hidden");
+    }
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!els.providerDropdown.contains(e.target)) {
+      els.providerMenu.classList.add("hidden");
+    }
+  });
+}
+// -------------------------
 
 function applyOutputDirection() {
   const lang = String(currentReportLanguage || selectedLanguage?.code || "en").toLowerCase();
@@ -407,6 +451,18 @@ async function loadHistory() {
 async function runAnalysis({ force }) {
   const url = els.url.value.trim();
   if (!url) return;
+  
+  const apiKey = els.apiKey.value.trim();
+  if (!apiKey) {
+    setHidden(els.statusCard, false);
+    setHidden(els.resultCard, true);
+    setHidden(els.infoBox, true);
+    setHidden(els.errorBox, false);
+    const providerInfo = PROVIDERS[selectedProvider] || PROVIDERS.gemini;
+    els.errorBox.innerHTML = `Please enter your ${providerInfo.name} API key. ${providerInfo.help}`;
+    return;
+  }
+  
   lastSubmittedUrl = url;
 
   els.run.disabled = true;
@@ -418,11 +474,15 @@ async function runAnalysis({ force }) {
   setProgress(0);
 
   try {
-    const { job_id, cached } = await postJson("/api/analyze", {
+    const payload = {
       url,
       output_language: selectedLanguage.code,
+      provider: selectedProvider,
       force: Boolean(force),
-    });
+      api_key: apiKey
+    };
+    
+    const { job_id, cached } = await postJson("/api/analyze", payload);
     if (cached) {
       setHidden(els.infoBox, false);
       els.infoBox.textContent = "Loaded saved analysis. Enable re-run to refresh.";
